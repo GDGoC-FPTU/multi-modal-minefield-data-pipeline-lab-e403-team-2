@@ -1,0 +1,90 @@
+name: Lab Grade Check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python starter_code/orchestrator.py
+
+      - name: Run unit tests folder
+        run: |
+          python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Run forensic script (for logs)
+        run: |
+          python forensic_agent/agent_forensic.py
+
+      - name: Enforce 3/3 score
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+
+          path = "processed_knowledge_base.json"
+          if not os.path.exists(path):
+              print("FAIL: processed_knowledge_base.json not found")
+              sys.exit(1)
+
+          with open(path, "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          score = 0
+          total = 3
+
+          # 1) CSV duplicates
+          ids = [d.get("document_id", "") for d in data if "csv-" in d.get("document_id", "")]
+          if len(ids) == len(set(ids)):
+              score += 1
+          else:
+              print("FAIL: Duplicate IDs detected in CSV documents")
+
+          # 2) Transcript price extraction
+          transcript_doc = next((d for d in data if d.get("source_type") == "Video"), None)
+          if transcript_doc and transcript_doc.get("source_metadata", {}).get("detected_price_vnd") == 500000:
+              score += 1
+          else:
+              print("FAIL: Transcript price extraction is incorrect")
+
+          # 3) Toxic content blocked
+          corrupt_check = any("Null pointer exception" in d.get("content", "") for d in data)
+          if not corrupt_check:
+              score += 1
+          else:
+              print("FAIL: Toxic content found in output")
+
+          print(f"Computed score: {score}/{total}")
+          if score != total:
+              sys.exit(1)
+          PY
+
+      - name: Upload output artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: processed-knowledge-base
+          path: processed_knowledge_base.json
