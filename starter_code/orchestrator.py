@@ -35,14 +35,57 @@ def main():
     output_path = os.path.join(os.path.dirname(SCRIPT_DIR), "processed_knowledge_base.json")
     # ----------------------------------------------
 
-    # TODO: Call each processing function (extract_pdf_data, clean_transcript, etc.)
-    # TODO: Run quality gates (run_quality_gate) before adding to final_kb
-    # TODO: Save final_kb to output_path using json.dump
-    
-    # Example:
-    # doc = extract_pdf_data(pdf_path)
-    # if doc and run_quality_gate(doc):
-    #     final_kb.append(doc)
+    pipeline_steps = [
+        ("pdf", extract_pdf_data, pdf_path),
+        ("transcript", clean_transcript, trans_path),
+        ("html", parse_html_catalog, html_path),
+        ("csv", process_sales_csv, csv_path),
+        ("legacy_code", extract_logic_from_code, code_path),
+    ]
+
+    for step_name, step_fn, input_path in pipeline_steps:
+        print(f"[Pipeline] Processing {step_name}: {input_path}")
+        try:
+            result = step_fn(input_path)
+        except Exception as exc:
+            print(f"[Pipeline] Step '{step_name}' failed: {exc}")
+            continue
+
+        # Some processors return one document, others return a list.
+        if result is None:
+            docs = []
+        elif isinstance(result, list):
+            docs = result
+        else:
+            docs = [result]
+
+        for doc in docs:
+            if not isinstance(doc, dict):
+                print(f"[Pipeline] Skipped invalid output from '{step_name}': not a dict")
+                continue
+
+            if not run_quality_gate(doc):
+                print(
+                    f"[Pipeline] Document rejected by quality gate: "
+                    f"{doc.get('document_id', '<unknown>')}"
+                )
+                continue
+
+            # Validate against role-1 schema before persisting.
+            try:
+                validated = UnifiedDocument.model_validate(doc)
+            except Exception as exc:
+                print(
+                    f"[Pipeline] Schema validation failed for "
+                    f"{doc.get('document_id', '<unknown>')}: {exc}"
+                )
+                continue
+
+            final_kb.append(validated.model_dump(mode="json"))
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(final_kb, f, ensure_ascii=False, indent=2)
+    print(f"[Pipeline] Saved output to {output_path}")
 
     end_time = time.time()
     print(f"Pipeline finished in {end_time - start_time:.2f} seconds.")
