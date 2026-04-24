@@ -54,8 +54,12 @@ class TestRole2Processors(unittest.TestCase):
 
     def test_legacy_processor_detects_discrepancy(self):
         doc = extract_logic_from_code(os.path.join(RAW_DATA_DIR, "legacy_pipeline.py"))
-        flags = [str(flag) for flag in doc.get("quality_flags", [])]
-        self.assertIn("discrepancy", flags)
+        raw_flags = doc.get("quality_flags", [])
+        normalized_flags = []
+        for flag in raw_flags:
+            value = getattr(flag, "value", flag)
+            normalized_flags.append(str(value).lower())
+        self.assertIn("discrepancy", normalized_flags)
 
 
 class TestRole3QualityGate(unittest.TestCase):
